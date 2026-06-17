@@ -10,7 +10,56 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from db import get_db
 
+# Import the EXTRA_FOODS from extra_foods.py
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from extra_foods import EXTRA_FOODS
+except ImportError:
+    EXTRA_FOODS = []
+
 meals_bp = Blueprint("meals", __name__, url_prefix="/api/meals")
+
+# ────────────────────────────────────────────────────────────
+# POST /api/meals/seed
+# ────────────────────────────────────────────────────────────
+@meals_bp.route("/seed", methods=["POST"])
+def seed_remote_foods():
+    # Only insert if empty
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) as c FROM foods")
+    count = cursor.fetchone()[0]
+    if count > 0:
+        cursor.close()
+        conn.close()
+        return jsonify({"message": f"Database already has {count} foods."}), 200
+
+    cursor.execute("DELETE FROM foods")
+    conn.commit()
+
+    inserted = 0
+    for f in EXTRA_FOODS:
+        try:
+            cursor.execute(
+                """INSERT INTO foods 
+                   (name, emoji, calories, protein, carbs, fat, diet, avoid_for, safe_for, meal_times, subtitle, ingredients)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    f["name"], f["emoji"], f["calories"], f["protein"], f["carbs"], f["fat"],
+                    f["diet"], f.get("avoid_for", ""), f.get("safe_for", ""), f.get("meal_times", ""),
+                    f.get("subtitle", ""), f.get("ingredients", "")
+                )
+            )
+            inserted += 1
+        except Exception as e:
+            print(f"Error inserting {f['name']}: {e}")
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    return jsonify({"message": f"Seeded {inserted} foods."}), 200
 
 
 # ────────────────────────────────────────────────────────────

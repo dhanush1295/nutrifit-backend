@@ -6,6 +6,7 @@ Run:  python3 seed_db.py
 import mysql.connector
 from config import Config
 from db import create_tables, get_db
+from extra_foods import EXTRA_FOODS
 
 
 def create_database():
@@ -375,6 +376,8 @@ def seed_foods():
     """Insert all food items into the foods table (skip duplicates)."""
     conn = get_db()
     cursor = conn.cursor()
+
+    FOODS.extend(EXTRA_FOODS)
 
     # Clear existing
     cursor.execute("DELETE FROM foods")
