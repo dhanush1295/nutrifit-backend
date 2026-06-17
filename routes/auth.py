@@ -159,17 +159,37 @@ def forgot_password():
 
     # Send email
     try:
-        msg = EmailMessage()
-        msg.set_content(f"Your NutriFit verification code is: {code}\nThis code expires in 10 minutes.")
-        msg["Subject"] = "NutriFit Password Reset Code"
-        msg["From"] = Config.SMTP_EMAIL
-        msg["To"] = email
+        brevo_key = os.environ.get("BREVO_API_KEY")
+        if brevo_key:
+            import requests
+            url = "https://api.brevo.com/v3/smtp/email"
+            headers = {
+                "accept": "application/json",
+                "api-key": brevo_key,
+                "content-type": "application/json"
+            }
+            payload = {
+                "sender": {"email": Config.SMTP_EMAIL, "name": "NutriFit"},
+                "to": [{"email": email}],
+                "subject": "NutriFit Password Reset Code",
+                "textContent": f"Your NutriFit verification code is: {code}\nThis code expires in 10 minutes."
+            }
+            res = requests.post(url, json=payload, headers=headers)
+            if not res.ok:
+                print(f"Brevo API error: {res.text}")
+                return jsonify({"error": "Failed to send verification email via API. Please try again later."}), 500
+        else:
+            msg = EmailMessage()
+            msg.set_content(f"Your NutriFit verification code is: {code}\nThis code expires in 10 minutes.")
+            msg["Subject"] = "NutriFit Password Reset Code"
+            msg["From"] = Config.SMTP_EMAIL
+            msg["To"] = email
 
-        server = smtplib.SMTP(Config.SMTP_SERVER, Config.SMTP_PORT, timeout=10)
-        server.starttls()
-        server.login(Config.SMTP_EMAIL, Config.SMTP_PASSWORD)
-        server.send_message(msg)
-        server.quit()
+            server = smtplib.SMTP(Config.SMTP_SERVER, Config.SMTP_PORT, timeout=10)
+            server.starttls()
+            server.login(Config.SMTP_EMAIL, Config.SMTP_PASSWORD)
+            server.send_message(msg)
+            server.quit()
     except Exception as e:
         print(f"Failed to send email: {e}")
         return jsonify({"error": "Failed to send verification email. Please try again later."}), 500
