@@ -2,6 +2,7 @@
 Authentication routes: signup, signin, forgot-password, verify-otp, reset-password, delete-account
 """
 
+import os
 import random
 import string
 import smtplib
