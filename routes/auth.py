@@ -264,7 +264,12 @@ def delete_account():
 
     conn = get_db()
     cursor = conn.cursor()
-    # CASCADE will delete all related data
+    cursor.execute("DELETE FROM meal_plans WHERE user_id = %s", (user_id,))
+    cursor.execute("DELETE FROM intake_logs WHERE user_id = %s", (user_id,))
+    cursor.execute("DELETE FROM chat_messages WHERE user_id = %s", (user_id,))
+    cursor.execute("DELETE FROM notifications WHERE user_id = %s", (user_id,))
+    
+    # Finally delete the user
     cursor.execute("DELETE FROM users WHERE id = %s", (user_id,))
     conn.commit()
     cursor.close()
