@@ -192,7 +192,7 @@ def forgot_password():
             server.quit()
     except Exception as e:
         print(f"Failed to send email: {e}")
-        return jsonify({"error": "Failed to send verification email. Please try again later."}), 500
+        return jsonify({"error": f"Debug error: {str(e)}"}), 500
 
     return jsonify({
         "message": "Verification code sent to your email.",
