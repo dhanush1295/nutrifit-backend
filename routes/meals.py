@@ -172,10 +172,20 @@ def swap_meal():
             conn.close()
             return jsonify({"error": "No alternative foods found matching your filters."}), 404
 
-        chosen = random.choice(candidates)
-        # If we are just shuffling (no new_food), don't save to DB yet. 
-        # Wait, if we don't save, how does the user confirm? They will call this again with new_food.
-        # Let's NOT save to DB if new_food is missing, just return the candidate!
+        chosen_raw = random.choice(candidates)
+        
+        # Scale to a reasonable portion of the calorie_limit (e.g., 80% of limit)
+        target_cals = int(calorie_limit * 0.8)
+        raw_cals = chosen_raw.get("calories", 0)
+        multiplier = (target_cals / raw_cals) if raw_cals > 0 else 1.0
+        
+        chosen = dict(chosen_raw)
+        chosen["calories"] = int(raw_cals * multiplier)
+        chosen["protein"] = int(chosen.get("protein", 0) * multiplier)
+        chosen["carbs"] = int(chosen.get("carbs", 0) * multiplier)
+        chosen["fat"] = int(chosen.get("fat", 0) * multiplier)
+        chosen["subtitle"] = f"{chosen.get('subtitle', '')} (Scaled)"
+
         conn.close()
         return jsonify({
             "message": "Candidate found.",
@@ -183,6 +193,27 @@ def swap_meal():
         }), 200
 
     # Update meal plan (only if new_food was provided)
+    # Since new_food is passed by name, we need to fetch it and scale it again.
+    # To keep it simple and accurate, we'll fetch it, then scale it similarly.
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT * FROM foods WHERE name = %s LIMIT 1", (new_food,))
+    exact_food = cursor.fetchone()
+    cursor.close()
+    
+    if exact_food:
+        target_cals = int(calorie_limit * 0.8)
+        raw_cals = exact_food.get("calories", 0)
+        multiplier = (target_cals / raw_cals) if raw_cals > 0 else 1.0
+        chosen = dict(exact_food)
+        chosen["calories"] = int(raw_cals * multiplier)
+        chosen["protein"] = int(chosen.get("protein", 0) * multiplier)
+        chosen["carbs"] = int(chosen.get("carbs", 0) * multiplier)
+        chosen["fat"] = int(chosen.get("fat", 0) * multiplier)
+        chosen["subtitle"] = f"{chosen.get('subtitle', '')} (Scaled)"
+    else:
+        # Fallback if somehow not found
+        chosen = {"name": new_food, "emoji": "", "calories": 0, "protein": 0, "carbs": 0, "fat": 0, "subtitle": "", "ingredients": ""}
+
     cur2 = conn.cursor()
     cur2.execute(
         """INSERT INTO meal_plans
@@ -199,9 +230,9 @@ def swap_meal():
                ingredients = VALUES(ingredients)""",
         (
             user_id, d, meal_type,
-            chosen["name"], chosen["emoji"], chosen["calories"],
-            chosen["protein"], chosen["carbs"], chosen["fat"],
-            chosen["subtitle"], chosen["ingredients"],
+            chosen["name"], chosen.get("emoji", ""), chosen.get("calories", 0),
+            chosen.get("protein", 0), chosen.get("carbs", 0), chosen.get("fat", 0),
+            chosen.get("subtitle", ""), chosen.get("ingredients", ""),
         ),
     )
     conn.commit()
@@ -335,12 +366,27 @@ def _get_plan_for_date(user_id, d):
 def _generate_plan(user_id, d, conn):
     """Auto-generate a day's meal plan based on user conditions and diet."""
     cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT diet, conditions FROM users WHERE id = %s", (user_id,))
+    cursor.execute("SELECT age, gender, weight_kg, height_cm, diet, conditions FROM users WHERE id = %s", (user_id,))
     user = cursor.fetchone()
 
     if not user:
         cursor.close()
         return
+
+    # Calculate user's required goal (BMR * 1.375)
+    age = user.get("age") or 28
+    weight = user.get("weight_kg") or 74.5
+    height = user.get("height_cm") or 178
+    gender = user.get("gender") or "Male"
+    
+    if gender.lower() == "male":
+        bmr = 10 * weight + 6.25 * height - 5 * age + 5
+    elif gender.lower() == "female":
+        bmr = 10 * weight + 6.25 * height - 5 * age - 161
+    else:
+        bmr = 10 * weight + 6.25 * height - 5 * age - 80
+        
+    daily_goal = round(bmr * 1.375)
 
     user_diet = user.get("diet", "pureVegetarian")
     user_conditions = set(
@@ -370,12 +416,27 @@ def _generate_plan(user_id, d, conn):
             if mt in by_meal_type:
                 by_meal_type[mt].append(f)
 
-    cursor2 = conn.cursor()
+    # Pick random meals and calculate raw total
+    selected_meals = {}
+    raw_total = 0
     for meal_type in ["Breakfast", "Lunch", "Dinner", "Snack"]:
         candidates = by_meal_type.get(meal_type, [])
-        if not candidates:
-            continue
-        chosen = random.choice(candidates)
+        if candidates:
+            chosen = random.choice(candidates)
+            selected_meals[meal_type] = chosen
+            raw_total += chosen.get("calories", 0)
+
+    # Scale to match the user's daily goal
+    multiplier = (daily_goal / raw_total) if raw_total > 0 else 1.0
+
+    cursor2 = conn.cursor()
+    for meal_type, chosen_raw in selected_meals.items():
+        scaled_cals = int(chosen_raw.get("calories", 0) * multiplier)
+        scaled_p = int(chosen_raw.get("protein", 0) * multiplier)
+        scaled_c = int(chosen_raw.get("carbs", 0) * multiplier)
+        scaled_f = int(chosen_raw.get("fat", 0) * multiplier)
+        subtitle = f"{chosen_raw.get('subtitle', '')} (Scaled)"
+
         try:
             cursor2.execute(
                 """INSERT INTO meal_plans
@@ -392,9 +453,9 @@ def _generate_plan(user_id, d, conn):
                        ingredients = VALUES(ingredients)""",
                 (
                     user_id, d, meal_type,
-                    chosen["name"], chosen["emoji"], chosen["calories"],
-                    chosen["protein"], chosen["carbs"], chosen["fat"],
-                    chosen["subtitle"], chosen["ingredients"],
+                    chosen_raw["name"], chosen_raw.get("emoji", ""), scaled_cals,
+                    scaled_p, scaled_c, scaled_f,
+                    subtitle, chosen_raw.get("ingredients", ""),
                 ),
             )
         except Exception:
